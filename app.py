@@ -1,6 +1,5 @@
 import streamlit as st
 import os
-# Importaciones de LangChain
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma
 from langchain_community.document_loaders import TextLoader
@@ -13,9 +12,7 @@ DATA_PATH = "./data/knowledge.txt"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2" 
 VECTOR_DB_COLLECTION = "consular_data"
 
-# Decorador de Streamlit para cachear la inicialización.
-# Esto asegura que el pesado proceso de embeddings solo se haga una vez
-# cuando el servidor se inicie, no en cada interacción del usuario.
+# @st.cache_resource asegura que esta función se ejecute solo una vez al inicio del Space
 @st.cache_resource
 def setup_rag_system():
     # A. Cargar y segmentar documentos
@@ -23,14 +20,13 @@ def setup_rag_system():
         loader = TextLoader(DATA_PATH, encoding="utf-8")
         documents = loader.load()
     except FileNotFoundError:
-        st.error(f"Error: El archivo de conocimiento no se encuentra en {DATA_PATH}. Asegúrate de que exista.")
+        st.error(f"Error: El archivo de conocimiento no se encuentra en {DATA_PATH}.")
         return None
 
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     texts = text_splitter.split_documents(documents)
     
-    # B. Crear Embeddings y Vector Store
-    # Usamos un modelo gratuito de Hugging Face
+    # B. Crear Embeddings y Vector Store (ChromaDB en memoria)
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     vector_store = Chroma.from_documents(
         texts, 
@@ -39,11 +35,12 @@ def setup_rag_system():
     )
     
     # C. Configurar LLM (Gemini) y Cadena RAG
-    # La API Key (GOOGLE_API_KEY) debe estar configurada en los secretos de Hugging Face
+    # La clave GOOGLE_API_KEY se lee desde los secretos del Space
     try:
         llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
     except Exception as e:
-        st.error(f"Error al inicializar Gemini. Asegúrate de que la variable GOOGLE_API_KEY esté correctamente configurada. {e}")
+        # Esto atrapará errores si la clave no está configurada o es inválida
+        st.error(f"Error al inicializar Gemini. Asegúrate de que la variable GOOGLE_API_KEY esté configurada correctamente.")
         return None
     
     qa_chain = RetrievalQA.from_chain_type(
@@ -53,16 +50,14 @@ def setup_rag_system():
     )
     return qa_chain
 
-# --- 3. INTERFAZ DE STREAMLIT ---
+# --- 2. INTERFAZ DE STREAMLIT ---
 
 st.set_page_config(page_title="Asistente Consular")
 st.title("🏛️ Asistente Consular Automatizado RAG")
 st.caption("Responde preguntas sobre trámites basado en la base de conocimiento cargada.")
 
-# Inicializar el sistema RAG
 qa_chain = setup_rag_system()
 
-# Si la inicialización fue exitosa
 if qa_chain:
     if "messages" not in st.session_state:
         st.session_state["messages"] = [{"role": "assistant", "content": "¡Hola! ¿En qué trámite consular puedo ayudarte hoy?"}]
@@ -76,10 +71,9 @@ if qa_chain:
 
         with st.spinner("Consultando base de conocimiento y redactando..."):
             try:
-                # Ejecutar la cadena RAG
                 result = qa_chain.run(prompt) 
             except Exception as e:
-                result = f"Hubo un error al procesar la solicitud con Gemini. Por favor, revisa la configuración de la API Key. Error: {e}"
+                result = "Hubo un error al conectar con el modelo de IA. Por favor, revisa tu clave de API."
         
         st.session_state.messages.append({"role": "assistant", "content": result})
         st.chat_message("assistant").write(result)
